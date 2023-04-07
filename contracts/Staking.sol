@@ -42,7 +42,7 @@ contract Staking{
        uint256 tierLevel;
        uint256 startTime;
        uint256 tokenStaked;
-       uint256 lastlyUpdate;
+       uint256 lastTimeClaim;
     }
     //mappings
     mapping(address => bool) unstakeBeforeTime;
@@ -65,9 +65,9 @@ contract Staking{
     event claimNft(uint256 indexed _nfts , uint256 indexed _claimAT);
     event StakeTokens(uint256 indexed _tier , uint256 indexed _tokenStaked);
     event UnstakedBeforeTime(uint256 indexed _stake , uint256 indexed _unStakeAt);
-    event TierUpgraded(uint256 indexed _newStake , uint256 indexed _rewTransfer,uint256 indexed _timePass);
+    event TierUpgraded(uint256 indexed _newStake , uint256 indexed _rewardTransfer);
     event StakeWithdraw(uint256 indexed _stake , uint256 indexed _withdrawerAt , uint256 indexed _rewardsTransfer);
-    event RewardsClaim(uint256 indexed _rewardperday , uint256 indexed _timepass , uint256 indexed _rewardsTransfer);
+    event RewardsClaim(uint256 indexed _rewardsTransfer);
     event withdrawTokensAndClaimRewards(uint256 indexed _stake , uint256 indexed _reward , uint256 indexed _withraAt);
     
     // admin functions-------------------------------------------------------------------------------------------------|
@@ -130,9 +130,14 @@ contract Staking{
     function getRewardsPercentage() public view returns(uint256[] memory _rewardsper){
         return rewardsPercentage;
     }
-    function checkMyRewards() public view returns(uint256 _rewards){
+
+    function CheckPerDayReward() public view returns(uint256 _rewardperday){
         uint256 percentage = rewardsPercentage[stakeinfo[msg.sender].tierLevel];
         return stakeinfo[msg.sender].tokenStaked.mul(percentage).div(10000);
+    }
+    function MyRewardsUnTillToday() public view returns(uint256 _rewardsUntillToday){
+        uint256 timeElapsed = block.timestamp.sub(stakeinfo[msg.sender].lastTimeClaim).div(60);
+        return CheckPerDayReward().mul(timeElapsed);
     }
 
     // user stake functions---------------------------------------------------------------------------------!
@@ -150,8 +155,10 @@ contract Staking{
             tierLevel:_selectTier,
             startTime:block.timestamp,
             tokenStaked: tiers[_selectTier],
-            lastlyUpdate:block.timestamp
+            lastTimeClaim:block.timestamp // lastclaimtime
         });
+
+        lastTimeNFTclaim[msg.sender] = block.timestamp;
 
         STK.transferFrom(msg.sender,address(this),tiers[_selectTier]);
         emit StakeTokens(_selectTier,tiers[_selectTier]);
@@ -159,13 +166,10 @@ contract Staking{
 
     // upgrade stake tier function
     function upGradeStakingTier(uint256 _desiredTier) public validateStaker {
-        require(_desiredTier > 0 && _desiredTier > stakeinfo[msg.sender].tierLevel  && _desiredTier < tiers.length, "invalid tier selected");
+        require(_desiredTier > stakeinfo[msg.sender].tierLevel  && _desiredTier < tiers.length, "invalid tier selected");
         require(block.timestamp < stakeinfo[msg.sender].startTime + 7 minutes , "time passed,can not upgrade now");
 
         uint256 tokensForUpdation = tiers[_desiredTier].sub(stakeinfo[msg.sender].tokenStaked); // needs change ?
-        uint256 rewardsPerDay = checkMyRewards().div(7);
-        uint256 timeElapsed =  block.timestamp.sub(stakeinfo[msg.sender].lastlyUpdate).div(60);
-        uint256 rewardsTransfer = rewardsPerDay.mul(timeElapsed);
 
         stakeinfo[msg.sender]= StakeInfo({
             isStaked:true,
@@ -173,12 +177,12 @@ contract Staking{
             tierLevel:_desiredTier,
             startTime:block.timestamp,
             tokenStaked: tiers[_desiredTier],
-            lastlyUpdate:block.timestamp
+            lastTimeClaim:block.timestamp
         });
 
-        RWT.transfer(msg.sender,rewardsTransfer);  
+        RWT.transfer(msg.sender,MyRewardsUnTillToday() );  
         STK.transferFrom(msg.sender,address(this) ,tokensForUpdation); // needschange ?
-        emit TierUpgraded(tiers[_desiredTier],rewardsTransfer,timeElapsed);
+        emit TierUpgraded(tiers[_desiredTier],MyRewardsUnTillToday());
     }
 
     // unstake before time function
@@ -195,39 +199,31 @@ contract Staking{
     // claim rewards function
     function claimRewards() public validateStaker{
         require(block.timestamp >= stakeinfo[msg.sender].startTime + 7 minutes , "staking not completed");
+        RWT.transfer(msg.sender,MyRewardsUnTillToday() );
+        stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
 
-        uint256 rewardsPerDay = checkMyRewards().div(7);
-        uint256 timeElapsed =  block.timestamp.sub(stakeinfo[msg.sender].lastlyUpdate).div(60);
-        uint256 rewardsTransfer = rewardsPerDay.mul(timeElapsed);
-
-        RWT.transfer(msg.sender,rewardsTransfer);
-        stakeinfo[msg.sender].lastlyUpdate = block.timestamp;
-
-        emit RewardsClaim(rewardsPerDay,timeElapsed,rewardsTransfer);
+        emit RewardsClaim(MyRewardsUnTillToday());
     }
 
     // withdraw stake function
     function withdrawStake() public validateStaker{
         require(block.timestamp > stakeinfo[msg.sender].startTime + 7 minutes ,"staking in progress");
-        uint256 rewardsPerDay = checkMyRewards().div(7);
-        uint256 timeElapsed =  block.timestamp.sub(stakeinfo[msg.sender].lastlyUpdate).div(60);
-        uint256 rewardsTransfer = rewardsPerDay.mul(timeElapsed);
-
-        RWT.transfer(msg.sender,rewardsTransfer);
+        RWT.transfer(msg.sender,MyRewardsUnTillToday() );
         STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked);
-        emit StakeWithdraw(stakeinfo[msg.sender].tokenStaked , block.timestamp , rewardsTransfer);
+        emit StakeWithdraw(stakeinfo[msg.sender].tokenStaked , block.timestamp , MyRewardsUnTillToday());
+        lastTimeNFTclaim[msg.sender]=0;
         delete stakeinfo[msg.sender];
     }
-
     //claim NFT function
+    mapping(address=>uint256) lastTimeNFTclaim;
+
     function claimNFTs() public validateStaker{
-        require(block.timestamp > stakeinfo[msg.sender].startTime + 30 minutes ,"Time is not completed for claiming NFT");
+        require(block.timestamp > lastTimeNFTclaim[msg.sender].add(10 minutes),"Time is not completed for claiming NFT");
         uint256 maxMintableNftnumber = stakeinfo[msg.sender].tierLevel + 1;
         for(uint256 i=0; i < maxMintableNftnumber; i++){
             RFT.safeMint(msg.sender);
         }   
+        lastTimeNFTclaim[msg.sender] =  block.timestamp;
         emit claimNft(maxMintableNftnumber,block.timestamp);    
-        // delete stakeinfo[msg.sender];
-        // unstakeBeforeTime();
     }  
 }
