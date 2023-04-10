@@ -4,6 +4,7 @@ pragma solidity ^0.8.9;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "./NFT.sol";
+import "./RWT.sol";
 import "hardhat/console.sol";
 
 contract Staking{
@@ -11,8 +12,8 @@ contract Staking{
     using SafeMath for uint256;
 
     NFT public RFT;
+    RWT public RWTS;
     IERC20 public STK;
-    IERC20 public RWT;
     
     address public admin;
 
@@ -22,9 +23,9 @@ contract Staking{
     constructor(address _STK, address _RWT, address _RFT, uint256[] memory _tiers ,
     uint256[] memory _rewardsPercentage)
     {   
-        RFT = NFT(_RFT);
-        STK = IERC20(_STK);
-        RWT = IERC20(_RWT);
+        RFT  = NFT(_RFT);
+        RWTS = RWT(_RWT);
+        STK  = IERC20(_STK);
         admin = msg.sender;
         rewardsPercentage = _rewardsPercentage;
 
@@ -72,6 +73,10 @@ contract Staking{
     event withdrawTokensAndClaimRewards(uint256 indexed _stake , uint256 indexed _reward , uint256 indexed _withraAt);
     
     // admin functions-------------------------------------------------------------------------------------------------|
+
+    // start staking time (admin can use the following function to start the staking time for the users)
+
+
     //  add new tier function (admin can add new staking tier with following function)
     function addNewTier(uint256 _tokenAmount  ,uint256 _rewardPecentage) public onlyAdmin  {
 
@@ -130,13 +135,13 @@ contract Staking{
     function getRewardsPercentage() public view returns(uint256[] memory _rewardsper){
         return rewardsPercentage;
     }
-    function CheckPerDayReward() public view returns(uint256 _rewardperday){
-        uint256 percentage = rewardsPercentage[stakeinfo[msg.sender].tierLevel];
+    function CheckPerDayReward(address _address) public view returns(uint256 _rewardperday){
+        uint256 percentage = rewardsPercentage[stakeinfo[_address].tierLevel];
         return stakeinfo[msg.sender].tokenStaked.mul(percentage).div(10000);
     }
-    function MyRewardsUnTillToday() public view returns(uint256 _rewardsUntillToday){
-        uint256 timeElapsed = block.timestamp.sub(stakeinfo[msg.sender].lastTimeClaim).div(60);
-        return CheckPerDayReward().mul(timeElapsed);
+    function MyRewardsUnTillToday(address _address) public view returns(uint256 _rewardsUntillToday){
+        uint256 timeElapsed = block.timestamp.sub(stakeinfo[_address].lastTimeClaim).div(60);
+        return CheckPerDayReward(_address).mul(timeElapsed);
     }
 
     // user stake functions---------------------------------------------------------------------------------!
@@ -178,45 +183,47 @@ contract Staking{
             lastTimeClaim:block.timestamp,
             lastNFTclaimTime:block.timestamp
         });
+        uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
+        console.log(rewardsTransfer);
+        
 
-        RWT.transfer(msg.sender,MyRewardsUnTillToday() );  
+        RWTS.mint(msg.sender,rewardsTransfer );  
         STK.transferFrom(msg.sender,address(this) ,tokensForUpdation); // needschange ?
-        emit TierUpgraded(tiers[_desiredTier],MyRewardsUnTillToday());
-    }
-
-    // unstake before time function
-    function UnstakeBeforeTime() public validateStaker {
-        require(!unstakeBeforeTime[msg.sender],"already unstaked before time");
-        require(block.timestamp < stakeinfo[msg.sender].startTime.add(7 minutes) , "time is completed , claim your rewards");
-
-        unstakeBeforeTime[msg.sender] = true;
-        STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked); 
-        emit UnstakedBeforeTime(stakeinfo[msg.sender].tokenStaked , block.timestamp);
-        delete stakeinfo[msg.sender];
-    } 
-
-    // claim rewards function
-    function claimRewards() public validateStaker{
-        require(block.timestamp >= stakeinfo[msg.sender].startTime + 7 minutes , "staking not completed");
-        RWT.transfer(msg.sender,MyRewardsUnTillToday() );
-        stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
-
-        emit RewardsClaim(MyRewardsUnTillToday());
+        emit TierUpgraded(tiers[_desiredTier],rewardsTransfer); // store function inside variable
     }
 
     // withdraw stake function
     function withdrawStake() public validateStaker{
-        require(block.timestamp > stakeinfo[msg.sender].startTime + 7 minutes ,"staking in progress");
-        RWT.transfer(msg.sender,MyRewardsUnTillToday() );
-        STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked);
-        emit StakeWithdraw(stakeinfo[msg.sender].tokenStaked , block.timestamp , MyRewardsUnTillToday());
-        delete stakeinfo[msg.sender];
+        if(block.timestamp >= stakeinfo[msg.sender].startTime.add(7 minutes)){
+            uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
+            console.log(rewardsTransfer);
+
+            RWTS.mint(msg.sender,rewardsTransfer);  
+            STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked);
+            emit StakeWithdraw(stakeinfo[msg.sender].tokenStaked , block.timestamp , rewardsTransfer);
+            delete stakeinfo[msg.sender];
+        }else{
+            STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked);
+            delete stakeinfo[msg.sender];
+        }
     }
+
+    // claim rewards function
+    function claimRewards() public validateStaker{
+        require(block.timestamp >= stakeinfo[msg.sender].startTime.add(7 minutes) , "staking not completed");
+        uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
+        console.log(rewardsTransfer);
+        stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
+        RWTS.mint(msg.sender,rewardsTransfer);  
+        emit RewardsClaim(rewardsTransfer);
+    }
+
+  
     //claim NFT function
 
     function claimNFTs() public validateStaker{
         require(block.timestamp > stakeinfo[msg.sender].lastNFTclaimTime.add(10 minutes),"Time is not completed for claiming NFT");
-        uint256 maxMintableNftnumber = stakeinfo[msg.sender].tierLevel + 1;
+        uint256 maxMintableNftnumber = stakeinfo[msg.sender].tierLevel.add(1);
         for(uint256 i=0; i < maxMintableNftnumber; i++){
             RFT.safeMint(msg.sender);
         }   
