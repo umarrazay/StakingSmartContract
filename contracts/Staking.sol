@@ -16,7 +16,6 @@ contract Staking{
     IERC20 public STK;
     
     address public admin;
-
     uint256[] public tiers;
     uint256[] public rewardsPercentage;
 
@@ -28,13 +27,11 @@ contract Staking{
         STK  = IERC20(_STK);
         admin = msg.sender;
         rewardsPercentage = _rewardsPercentage;
-
         for (uint256 i = 0; i < _tiers.length; i++) {
             _tiers[i] *= 10**18;
         }
         tiers = _tiers;
     }
-
     //structs
     struct StakeInfo
     {
@@ -47,7 +44,6 @@ contract Staking{
        uint256 lastNFTclaimTime;
     }
     //mappings
-    mapping(address => bool) unstakeBeforeTime;
     mapping(address => StakeInfo) public stakeinfo;
 
     // modifiers
@@ -64,19 +60,13 @@ contract Staking{
     event TierAdded(uint256 indexed _tokensAmount , uint256 indexed _rewardsPercent ,uint256 indexed _addedAT);
     event TiersUpdated(uint256 indexed _tokensAmount ,  uint256 indexed _rewardsPercent, uint256 indexed _updateAt);
     //user events
-    event claimNft(uint256 indexed _nfts , uint256 indexed _claimAT);
+    event claimNft(uint256 indexed _noOfNFTs , uint256 indexed _claimAT);
     event StakeTokens(uint256 indexed _tier , uint256 indexed _tokenStaked);
-    event UnstakedBeforeTime(uint256 indexed _stake , uint256 indexed _unStakeAt);
     event TierUpgraded(uint256 indexed _newStake , uint256 indexed _rewardTransfer);
-    event StakeWithdraw(uint256 indexed _stake , uint256 indexed _withdrawerAt , uint256 indexed _rewardsTransfer);
-    event RewardsClaim(uint256 indexed _rewardsTransfer);
-    event withdrawTokensAndClaimRewards(uint256 indexed _stake , uint256 indexed _reward , uint256 indexed _withraAt);
+    event RewardsClaim(uint256 indexed _rewardsTransfer , uint256 indexed _claimAT);
+    event StakeWithdraw(uint256 indexed _stake , uint256 indexed _rewardsTransfer , uint256 indexed _withdrawerAt);
     
     // admin functions-------------------------------------------------------------------------------------------------|
-
-    // start staking time (admin can use the following function to start the staking time for the users)
-
-
     //  add new tier function (admin can add new staking tier with following function)
     function addNewTier(uint256 _tokenAmount  ,uint256 _rewardPecentage) public onlyAdmin  {
 
@@ -166,63 +156,48 @@ contract Staking{
         STK.transferFrom(msg.sender,address(this),tiers[_selectTier]);
         emit StakeTokens(_selectTier,tiers[_selectTier]);
     }
-
     // upgrade stake tier function
     function upGradeStakingTier(uint256 _desiredTier) public validateStaker {
         require(_desiredTier > stakeinfo[msg.sender].tierLevel  && _desiredTier < tiers.length, "invalid tier selected");
         require(block.timestamp < stakeinfo[msg.sender].startTime.add(7 minutes) , "time passed,can not upgrade now");
 
-        uint256 tokensForUpdation = tiers[_desiredTier].sub(stakeinfo[msg.sender].tokenStaked); // needs change ?
-
-        stakeinfo[msg.sender]= StakeInfo({
-            isStaked:true,
-            staker:msg.sender,
-            tierLevel:_desiredTier,
-            startTime:block.timestamp,
-            tokenStaked: tiers[_desiredTier],
-            lastTimeClaim:block.timestamp,
-            lastNFTclaimTime:block.timestamp
-        });
+        uint256 tokensForUpdation = tiers[_desiredTier].sub(stakeinfo[msg.sender].tokenStaked); 
         uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
-        console.log(rewardsTransfer);
-        
+        stakeinfo[msg.sender].tierLevel = _desiredTier;
+        stakeinfo[msg.sender].tokenStaked = tiers[_desiredTier];
+        stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
 
         RWTS.mint(msg.sender,rewardsTransfer );  
-        STK.transferFrom(msg.sender,address(this) ,tokensForUpdation); // needschange ?
-        emit TierUpgraded(tiers[_desiredTier],rewardsTransfer); // store function inside variable
+        STK.transferFrom(msg.sender,address(this) ,tokensForUpdation); 
+        emit TierUpgraded(tiers[_desiredTier],rewardsTransfer); 
     }
-
     // withdraw stake function
     function withdrawStake() public validateStaker{
-        if(block.timestamp >= stakeinfo[msg.sender].startTime.add(7 minutes)){
-            uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
-            console.log(rewardsTransfer);
+        
+        uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
+        uint256 unStakeAmount = stakeinfo[msg.sender].tokenStaked;
 
+        if(block.timestamp >= stakeinfo[msg.sender].startTime.add(7 minutes)){
             RWTS.mint(msg.sender,rewardsTransfer);  
             STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked);
-            emit StakeWithdraw(stakeinfo[msg.sender].tokenStaked , block.timestamp , rewardsTransfer);
             delete stakeinfo[msg.sender];
         }else{
             STK.transfer(msg.sender,stakeinfo[msg.sender].tokenStaked);
             delete stakeinfo[msg.sender];
         }
+        emit StakeWithdraw(unStakeAmount,rewardsTransfer , block.timestamp);
     }
-
     // claim rewards function
     function claimRewards() public validateStaker{
         require(block.timestamp >= stakeinfo[msg.sender].startTime.add(7 minutes) , "staking not completed");
         uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
-        console.log(rewardsTransfer);
         stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
         RWTS.mint(msg.sender,rewardsTransfer);  
-        emit RewardsClaim(rewardsTransfer);
+        emit RewardsClaim(rewardsTransfer , block.timestamp);
     }
-
-  
     //claim NFT function
-
     function claimNFTs() public validateStaker{
-        require(block.timestamp > stakeinfo[msg.sender].lastNFTclaimTime.add(10 minutes),"Time is not completed for claiming NFT");
+        require(block.timestamp > stakeinfo[msg.sender].lastNFTclaimTime.add(37 minutes),"Time is not completed for claiming NFT");
         uint256 maxMintableNftnumber = stakeinfo[msg.sender].tierLevel.add(1);
         for(uint256 i=0; i < maxMintableNftnumber; i++){
             RFT.safeMint(msg.sender);
