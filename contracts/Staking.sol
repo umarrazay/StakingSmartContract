@@ -14,7 +14,6 @@ contract Staking{
     NFT public RFT;
     RWT public RWTS;
     IERC20 public STK;
-    
     address public admin;
     uint256[] public tiers;
     uint256[] public rewardsPercentage;
@@ -159,10 +158,12 @@ contract Staking{
     // upgrade stake tier function
     function upGradeStakingTier(uint256 _desiredTier) public validateStaker {
         require(_desiredTier > stakeinfo[msg.sender].tierLevel  && _desiredTier < tiers.length, "invalid tier selected");
+        // require(STK.balanceOf(msg.sender) >= tokensForUpdation ,"insufficient balance");// optional
         require(block.timestamp < stakeinfo[msg.sender].startTime.add(7 minutes) , "time passed,can not upgrade now");
 
         uint256 tokensForUpdation = tiers[_desiredTier].sub(stakeinfo[msg.sender].tokenStaked); 
         uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
+
         stakeinfo[msg.sender].tierLevel = _desiredTier;
         stakeinfo[msg.sender].tokenStaked = tiers[_desiredTier];
         stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
@@ -172,7 +173,7 @@ contract Staking{
         emit TierUpgraded(tiers[_desiredTier],rewardsTransfer); 
     }
     // withdraw stake function
-    function withdrawStake() public validateStaker{
+    function UnStake() public validateStaker{
         
         uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
         uint256 unStakeAmount = stakeinfo[msg.sender].tokenStaked;
@@ -190,14 +191,16 @@ contract Staking{
     // claim rewards function
     function claimRewards() public validateStaker{
         require(block.timestamp >= stakeinfo[msg.sender].startTime.add(7 minutes) , "staking not completed");
+
         uint256 rewardsTransfer = MyRewardsUnTillToday(msg.sender);
         stakeinfo[msg.sender].lastTimeClaim = block.timestamp;
+        
         RWTS.mint(msg.sender,rewardsTransfer);  
         emit RewardsClaim(rewardsTransfer , block.timestamp);
     }
     //claim NFT function
     function claimNFTs() public validateStaker{
-        require(block.timestamp > stakeinfo[msg.sender].lastNFTclaimTime.add(37 minutes),"Time is not completed for claiming NFT");
+        require(block.timestamp > stakeinfo[msg.sender].lastNFTclaimTime.add(30 minutes),"Time is not completed for claiming NFT");
         uint256 maxMintableNftnumber = stakeinfo[msg.sender].tierLevel.add(1);
         for(uint256 i=0; i < maxMintableNftnumber; i++){
             RFT.safeMint(msg.sender);
